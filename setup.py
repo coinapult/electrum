@@ -127,6 +127,7 @@ setup(
         'electrum_gui.stdio',
         'electrum_gui.text',
         'electrum_plugins.btchipwallet',
+        'electrum_plugins.coinapult_locks',
         'electrum_plugins.coinbase_buyback',
         'electrum_plugins.cosigner_pool',
         'electrum_plugins.exchange_rate',
