@@ -23,6 +23,7 @@ EXCHANGES = ["BitcoinAverage",
              "Blockchain",
              "BTCChina",
              "CaVirtEx",
+             "Coinapult",
              "Coinbase",
              "CoinDesk",
              "itBit",
@@ -64,7 +65,6 @@ class Exchanger(threading.Thread):
             raise
         return json_resp
 
-
     def exchange(self, btc_amount, quote_currency):
         with self.lock:
             if self.quote_currencies is None:
@@ -89,6 +89,7 @@ class Exchanger(threading.Thread):
             "BTCChina": self.update_CNY,
             "CaVirtEx": self.update_cv,
             "CoinDesk": self.update_cd,
+            "Coinapult": self.update_cp,
             "Coinbase": self.update_cb,
             "itBit": self.update_ib,
             "LocalBitcoins": self.update_lb,
@@ -105,7 +106,6 @@ class Exchanger(threading.Thread):
             self.query_rates.clear()
             self.update_rate()
             self.query_rates.wait(150)
-
 
     def update_cd(self):
         try:
@@ -234,6 +234,21 @@ class Exchanger(threading.Thread):
             pass
         self.parent.set_currencies(quote_currencies)
 
+    def update_cp(self):
+        quote_currencies = {}
+        try:
+            for rate in ('USD', 'EUR', 'GBP', 'XAU', 'XAG'):
+                try:
+                    jsonresp = self.get_json('api.coinapult.com', "/api/ticker?market=" + rate + "_BTC&filter=small")
+                    quote_currencies[rate] = jsonresp['index']
+                except Exception:
+                    return
+            with self.lock:
+                self.quote_currencies = quote_currencies
+        except KeyError:
+            pass
+        self.parent.set_currencies(quote_currencies)
+
     def update_cb(self):
         try:
             jsonresp = self.get_json('coinbase.com', "/api/v1/currencies/exchange_rates")
@@ -250,7 +265,6 @@ class Exchanger(threading.Thread):
         except KeyError:
             pass
         self.parent.set_currencies(quote_currencies)
-
 
     def update_bc(self):
         try:
@@ -282,7 +296,6 @@ class Exchanger(threading.Thread):
             pass
         self.parent.set_currencies(quote_currencies)
 
-
     def update_bv(self):
         try:
             jsonresp = self.get_json('api.bitcoinvenezuela.com', "/")
@@ -297,7 +310,6 @@ class Exchanger(threading.Thread):
         except KeyError:
             pass
         self.parent.set_currencies(quote_currencies)
-
 
     def update_ba(self):
         try:
@@ -315,13 +327,15 @@ class Exchanger(threading.Thread):
             pass
         self.parent.set_currencies(quote_currencies)
 
-
     def _lookup_rate(self, response, quote_id):
         return decimal.Decimal(str(response[str(quote_id)]["15m"]))
+
     def _lookup_rate_cb(self, response, quote_id):
         return decimal.Decimal(str(response[str(quote_id)]))
+
     def _lookup_rate_ba(self, response, quote_id):
         return decimal.Decimal(response[str(quote_id)]["last"])
+
     def _lookup_rate_lb(self, response, quote_id):
         return decimal.Decimal(response[str(quote_id)]["rates"]["last"])
 
@@ -332,8 +346,7 @@ class Plugin(BasePlugin):
         return "Exchange rates"
 
     def description(self):
-        return """exchange rates, retrieved from blockchain.info, CoinDesk, or Coinbase"""
-
+        return """exchange rates, retrieved from blockchain.info, CoinDesk, Coinbase, or other publishers"""
 
     def __init__(self,a,b):
         BasePlugin.__init__(self,a,b)
@@ -417,10 +430,8 @@ class Plugin(BasePlugin):
 
         self.tx_list = tx_list
 
-
     def requires_settings(self):
         return True
-
 
     @hook
     def history_tab_update(self):
@@ -513,7 +524,6 @@ class Plugin(BasePlugin):
             self.gui.main_window.history_list.setColumnWidth(4, 140)
             self.gui.main_window.history_list.setColumnWidth(5, 120)
             self.gui.main_window.is_edit = False
-
 
     def settings_widget(self, window):
         return EnterButton(_('Settings'), self.settings_dialog)
