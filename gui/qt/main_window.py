@@ -143,9 +143,6 @@ class ElectrumWindow(QMainWindow):
         tabs.addTab(self.create_addresses_tab(), _('Addresses') )
         tabs.addTab(self.create_contacts_tab(), _('Contacts') )
         tabs.addTab(self.create_invoices_tab(), _('Invoices') )
-        pluginTab = run_hook('load_plugin_tabs')
-        if pluginTab:
-            tabs.addTab(pluginTab['content'], pluginTab['label'])
         tabs.addTab(self.create_console_tab(), _('Console') )
         tabs.setMinimumSize(600, 400)
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -498,6 +495,13 @@ class ElectrumWindow(QMainWindow):
                 quote = r.get(0)
                 if quote:
                     text += "%s"%quote
+
+                # append Locks balance
+                r = {}
+                run_hook('get_locks_balances_string', r)
+                bals = r.get(0)
+                if bals:
+                    text += bals
 
                 if self.tray:
                     self.tray.setToolTip(text)
