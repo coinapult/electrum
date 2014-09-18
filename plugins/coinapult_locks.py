@@ -12,6 +12,8 @@ from urlparse import urljoin
 from hashlib import sha256, sha512
 
 import requests
+from gui.qt import MyTreeWidget
+from gui.qt.qrcodewidget import QRCodeWidget
 
 ecdsa = None
 try:
@@ -23,7 +25,7 @@ from electrum_gui.qt import HelpButton, EnterButton
 from electrum.i18n import _
 from electrum.plugins import BasePlugin, hook
 from PyQt4.QtGui import QMessageBox, QApplication, QPushButton, QComboBox, QDialog, QGridLayout, QLabel, QLineEdit, \
-    QCheckBox
+    QCheckBox, QWidget, QHeaderView
 
 
 __version__ = "2.00.02"
@@ -537,14 +539,45 @@ class Plugin(BasePlugin):
 
     @hook
     def init_qt(self, gui):
-        self.window = gui.main_window
-        if not self.api_key() or not self.api_secret():  # First run, throw plugin settings in your face
+        if not self.agreed_tos() or not self.api_key() or not self.api_secret():
             if self.settings_dialog():
                 self.set_enabled(True)
                 return True
             else:
                 self.set_enabled(False)
                 return False
+
+    @hook
+    def load_plugin_tabs(self):
+        def create_locks_tab():
+            w = QWidget()
+            grid = QGridLayout(w)
+            grid.setColumnMinimumWidth(3, 300)
+            grid.setColumnStretch(5, 1)
+
+            #TODO: Locks GUI goes here
+
+            self.save_request_button = QPushButton(_('Save'))
+            grid.addWidget(self.save_request_button, 3, 1)
+            return w
+
+        if self.is_enabled() and self.agreed_tos() and self.api_key() and self.api_secret():
+            response = {"content": create_locks_tab(), "label": "Locks"}
+            return response
+        else:
+            return False
+
+    def enable(self):
+        # tabs = self.load_plugin_tabs()
+        # self.gui.main_window.tabs.addTab(tabs['content'], tabs['label'])
+        self.set_enabled(True)
+        return True
+
+    def disable(self):
+        # remove tab... but we need to find the index somehow
+        #self.window.tabs.removeTab(ti)
+        self.set_enabled(False)
+        return True
 
     def is_available(self):
         return True
@@ -576,7 +609,11 @@ class Plugin(BasePlugin):
         def ok_clicked():
             check_for_api_key(self.api_key_edit.text())
             check_for_api_secret(self.api_secret_edit.text())
-            d.accept()
+            if self.agreed_tos():
+                d.accept()
+            else:
+                self.disable()
+                return False
 
         def on_change_tos(checked):
             if checked:
