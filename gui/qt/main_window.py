@@ -486,8 +486,19 @@ class ElectrumWindow(QMainWindow):
                 icon = QIcon(":icons/status_lagging.png")
             else:
                 c, u = self.wallet.get_account_balance(self.current_account)
+
+                # include Locks balance?
+                r = {}
+                run_hook('get_locks_BTC_balance', r)
+                lock_bals = r.get(0)
+                if lock_bals:
+                    c += int(lock_bals * 1e8)
+
                 text =  _( "Balance" ) + ": %s "%( self.format_amount(c) ) + self.base_unit()
                 if u: text +=  " [%s unconfirmed]"%( self.format_amount(u,True).strip() )
+
+                if lock_bals:
+                    text += " [~%s BTC Locked]" % lock_bals
 
                 # append fiat balance and price from exchange rate plugin
                 r = {}
@@ -495,13 +506,6 @@ class ElectrumWindow(QMainWindow):
                 quote = r.get(0)
                 if quote:
                     text += "%s"%quote
-
-                # append Locks balance
-                r = {}
-                run_hook('get_locks_balances_string', r)
-                bals = r.get(0)
-                if bals:
-                    text += bals
 
                 if self.tray:
                     self.tray.setToolTip(text)
