@@ -22,12 +22,19 @@ except ImportError:
 __version__ = "2.00.02"
 
 
+# ECC_COINAPULT_PUB = """\
+# -----BEGIN PUBLIC KEY-----
+# MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEhXHKa4ZXjEgSGEskEZdcgrx8Ye9qGHte
+# RlkdhZwHU8xVGwJ08GMFcZwJoX5RVL2igLPgXjk6Un8nyqrGztyD5Q==
+# -----END PUBLIC KEY-----
+# """
 ECC_COINAPULT_PUB = """\
 -----BEGIN PUBLIC KEY-----
-MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEhXHKa4ZXjEgSGEskEZdcgrx8Ye9qGHte
-RlkdhZwHU8xVGwJ08GMFcZwJoX5RVL2igLPgXjk6Un8nyqrGztyD5Q==
+MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEWp9wd4EuLhIZNaoUgZxQztSjrbqgTT0w
+LBq8RwigNE6nOOXFEoGCjGfekugjrHWHUi8ms7bcfrowpaJKqMfZXg==
 -----END PUBLIC KEY-----
 """
+
 ECC_COINAPULT_PUBKEY = None
 if ecdsa:
     ECC_COINAPULT_PUBKEY = ecdsa.VerifyingKey.from_pem(ECC_COINAPULT_PUB)

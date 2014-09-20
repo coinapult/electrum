@@ -14,9 +14,9 @@ from gui.qt.qrcodewidget import QRCodeWidget
 
 from electrum_gui.qt import HelpButton, EnterButton
 from electrum.i18n import _
-from electrum.plugins import BasePlugin, hook
+from electrum.plugins import BasePlugin, hook, run_hook
 from PyQt4.QtGui import QMessageBox, QApplication, QPushButton, QComboBox, QDialog, QGridLayout, QLabel, QLineEdit, \
-    QCheckBox, QWidget, QHeaderView
+    QCheckBox, QWidget, QHeaderView, QSizePolicy, QTextEdit, QPlainTextEdit
 from electrum.bitcoin import is_valid
 from lib.coinapult import CoinapultClient, CoinapultError
 
@@ -46,7 +46,10 @@ class Balance_updater(threading.Thread):
         try:
             bals = self.client.accountInfo(balanceType='locks', locksAsBTC=True)
             if bals and 'balances' in bals:
-                self.parent.config.set_key('Locks_BTC_balance', bals['balances'][0]['amount'], True)
+                if len(bals['balances']) > 0:
+                    self.parent.config.set_key('Locks_BTC_balance', bals['balances'][0]['amount'], True)
+                else:
+                    self.parent.config.set_key('Locks_BTC_balance', 0, True)
 
             bals = self.client.accountInfo(balanceType='locks')
             if bals and 'balances' in bals:
@@ -72,7 +75,21 @@ class Plugin(BasePlugin):
 
     def __init__(self, config, name):
         BasePlugin.__init__(self, config, name)
-        self.client = CoinapultClient(credentials={'key': self.api_key(), 'secret': self.api_secret()})
+        authMethod = self.config.get('coinapult_auth_method', 'REST')
+        if authMethod == 'REST':
+            self.client = CoinapultClient(credentials={'key': self.api_key(), 'secret': self.api_secret()})
+        else:
+            #TODO should this be moved to the wallet?
+            ecc_pub = self.config.get('coinapult_ecc_public', '')
+            ecc_priv = self.config.get('coinapult_ecc_private', '')
+            try:
+                self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
+
+                self.client.activateAccount(agree=True)  # TODO move to manual agreement query
+
+            except:
+                self.client = None
+                #TODO disable plugin??
         self.balance_updater = None
         self.gui = None
 
@@ -140,12 +157,30 @@ class Plugin(BasePlugin):
         return _("Coinapult's Locks service lets users tie the value of their bitcoins to USD, EUR, GBP, "
                  "gold or silver.")
 
-    def create_locks_tab(self):
-        def on_change_action(act):
-            action = LOCK_ACTIONS[act]
-            if action != self.config.get('Locks_action', "Lock"):
-                self.config.set_key('Locks_action', action, True)
+    def update_locks_bal_display(self):
+        lock_bals = self.locks_balances()
+        row = 2
+        for cur in LOCKS_CURRENCIES:
+            if cur == 'XAU':
+                disp_cur = 'oz of Gold'
+            elif cur == 'XAG':
+                disp_cur = 'oz of Silver'
+            else:
+                disp_cur = cur
+            widg = self.tabLayout.itemAtPosition(row, 1)
+            widg.setText('%s %s' % (lock_bals[cur], disp_cur))
+            # self.tabLayout.addWidget(QLabel(_('%s %s' % (lock_bals[cur], disp_cur))), row, 1)
+            row += 1
+        widg = self.tabLayout.itemAtPosition(row, 1)
+        # self.tabLayout.addWidget(QLabel(_('Estimated Total BTC Value')), row, 0)
+        widg.setText('%s BTC' % self.locks_BTC_balance())
 
+    def on_change_action(self, act):
+        action = LOCK_ACTIONS[act]
+        if action != self.config.get('Locks_action', "Lock"):
+            self.config.set_key('Locks_action', action, True)
+
+    def create_locks_tab(self):
         def on_change_currency(cur):
             if cur != self.config.get('Locks_currency', "USD"):
                 self.config.set_key('Locks_currency', LOCKS_CURRENCIES[cur], True)
@@ -155,16 +190,13 @@ class Plugin(BasePlugin):
                 self.config.set_key('Locks_amount', str(amount), True)
 
         w = QWidget()
-        grid = QGridLayout(w)
+        self.tabLayout = QGridLayout(w)
 
-        row = 0
+        self.tabLayout.addWidget(QLabel(_('Locks by Coinapult')), 0, 0)
+        self.tabLayout.addWidget(QLabel(_('Eliminate price volatility by Locking bitcoin to a stable asset.')), 0, 1)
+        self.tabLayout.addWidget(QLabel(_('Locks balances')), 1, 0)
 
-        grid.addWidget(QLabel(_('Locks by Coinapult')), row, 0)
-        # row += 1
-        grid.addWidget(QLabel(_('Eliminate price volatility by Locking bitcoin to a stable asset.')), row, 1)
-        row += 1
-        locks_bals = self.locks_balances()
-        grid.addWidget(QLabel(_('Locks balances')), row, 0)
+        row = 1
         for cur in LOCKS_CURRENCIES:
             if cur == 'XAU':
                 disp_cur = 'oz of Gold'
@@ -172,35 +204,32 @@ class Plugin(BasePlugin):
                 disp_cur = 'oz of Silver'
             else:
                 disp_cur = cur
-            grid.addWidget(QLabel(_('%s %s' % (locks_bals[cur], disp_cur))), row, 1)
+            self.tabLayout.addWidget(QLabel(_('- %s' % disp_cur)), row, 1)
             row += 1
-        grid.addWidget(QLabel(_('Estimated Total BTC Value')), row, 0)
-        grid.addWidget(QLabel(_('%s BTC' % self.locks_BTC_balance())), row, 1)
-        row += 1
 
-        grid.addWidget(QLabel(_('What would you like to do?')), row, 0)
+        self.tabLayout.addWidget(QLabel(_('Estimated Total BTC Value')), row, 0)
+        self.tabLayout.addWidget(QLabel(_('%s BTC' % self.locks_BTC_balance())), row, 1)
+
+        self.tabLayout.addWidget(QLabel(_('What would you like to do?')), 7, 0)
         combo_action = QComboBox()
-        combo_action.currentIndexChanged.connect(on_change_action)
+        combo_action.currentIndexChanged.connect(self.on_change_action)
         combo_action.addItems(LOCK_ACTIONS)
-        grid.addWidget(combo_action, row, 1)
-        row += 1
+        self.tabLayout.addWidget(combo_action, 7, 1)
 
-        grid.addWidget(QLabel(_('Lock to which asset?')), row, 0)
+        self.tabLayout.addWidget(QLabel(_('Which asset?')), 8, 0)
         combo_currency = QComboBox()
         combo_currency.currentIndexChanged.connect(on_change_currency)
         combo_currency.addItems(LOCKS_CURRENCIES)
-        grid.addWidget(combo_currency, row, 1)
-        row += 1
+        self.tabLayout.addWidget(combo_currency, 8, 1)
 
-        grid.addWidget(QLabel(_('How much in BTC?')), row, 0)
+        self.tabLayout.addWidget(QLabel(_('How much in BTC?')), 9, 0)
         btc_amount_edit = QLineEdit('0')
         btc_amount_edit.textChanged.connect(on_btc_amount_change)
-        grid.addWidget(btc_amount_edit, row, 1)
-        row += 1
+        self.tabLayout.addWidget(btc_amount_edit, 9, 1)
 
         quote_button = QPushButton(_('Get Quote'))
         quote_button.clicked.connect(self.get_quote)
-        grid.addWidget(quote_button, row, 1)
+        self.tabLayout.addWidget(quote_button, 10, 1)
 
         return w
 
@@ -234,49 +263,133 @@ class Plugin(BasePlugin):
             if api_secret and len(api_secret) > 12:
                 self.config.set_key("plugin_coinapult_locks_api_secret", str(api_secret))
 
+        def check_for_ecc_pub_key(pub_key):
+            if pub_key and len(pub_key) > 12:
+                self.config.set_key("coinapult_ecc_public", str(pub_key))
+
+        def check_for_ecc_priv_key(priv_key):
+            if priv_key and len(priv_key) > 12:
+                self.config.set_key("coinapult_ecc_private", str(priv_key))
+
         def ok_clicked():
-            check_for_api_key(self.api_key_edit.text())
-            check_for_api_secret(self.api_secret_edit.text())
+            # check_for_api_key(self.api_key_edit.text())
+            # check_for_api_secret(self.api_secret_edit.text())
+            check_for_ecc_pub_key(self.ecc_pub_key_edit.toPlainText())
+            check_for_ecc_priv_key(self.ecc_priv_key_edit.toPlainText())
             if self.agreed_tos():
                 d.accept()
             else:
                 self.disable()
                 return False
 
+        def on_change_auth_method(method):
+            if method == 'REST':
+                self.config.set_key('coinapult_auth_method', 'REST', True)
+            else:
+                self.config.set_key('coinapult_auth_method', 'ECC', True)
+
+        def on_click_create_account():
+            #TODO are there keys already? Warn before overwriting!
+            pass
+
+        d = QDialog()
+        d.setWindowTitle("Settings")
+        layout = QGridLayout(d)
+
+        label = QLabel(_("Coinapult's Locks service lets users tie the value of their bitcoins to USD, EUR, GBP, "
+                         "gold or silver. This variable bitcoin balance is redeemable for a fixed amount of the asset "
+                         "of your choice, on demand.\n\n"
+                         "If you already have a Coinapult account, simply paste your ECC credentials below.\n"
+                         "Otherwise, click 'Create Account' to see our Terms of Service and generate your ECC keys."))
+        label.setWordWrap(True)
+        layout.addWidget(label, 0, 1, 1, 2)
+
+        create_account_button = QPushButton(_('Create Account'))
+        create_account_button.clicked.connect(self.create_account_dialog)
+        layout.addWidget(create_account_button, 2, 1)
+
+        layout.addWidget(QLabel(_('ECC public key')), 3, 0)
+        self.ecc_pub_key_edit = QTextEdit(self.config.get("coinapult_ecc_public", ''))
+        # self.ecc_pub_key_edit.textChanged.connect(check_for_ecc_pub_key)
+        layout.addWidget(self.ecc_pub_key_edit, 3, 1)
+        # layout.setRowStretch(2, 3)
+
+        layout.addWidget(QLabel(_('ECC private key')), 4, 0)
+        self.ecc_priv_key_edit = QTextEdit("hidden")
+        # self.ecc_priv_key_edit.textChanged.connect(check_for_ecc_priv_key)
+        layout.addWidget(self.ecc_priv_key_edit, 5, 1)
+        # layout.setRowStretch(2, 3)
+
+        ## Rest Layout
+        # layout.addWidget(QLabel(_('Coinapult API key: ')), 0, 0)
+        # self.api_key_edit = QLineEdit(self.api_key())
+        # self.api_key_edit.textChanged.connect(check_for_api_key)
+        # layout.addWidget(self.api_key_edit, 0, 1, 1, 2)
+        #
+        # layout.addWidget(QLabel(_('Coinapult API secret: ')), 1, 0)
+        # self.api_secret_edit = QLineEdit("hidden")
+        # self.api_key_edit.textChanged.connect(check_for_api_secret)
+        # layout.addWidget(self.api_secret_edit, 1, 1, 1, 2)
+
+        ok_button = QPushButton(_("OK"))
+        ok_button.setMaximumWidth(50)
+        ok_button.clicked.connect(lambda: ok_clicked())
+        layout.addWidget(ok_button, 6, 1)
+
+        if d.exec_():
+            return True
+        else:
+            return False
+
+    def create_account_dialog(self):
         def on_change_tos(checked):
             if checked:
                 self.config.set_key('plugin_coinapult_locks_tos', 'checked')
             else:
                 self.config.set_key('plugin_coinapult_locks_tos', 'unchecked')
 
+        def ok_clicked():
+            if self.agreed_tos():
+                self.client.createAccount(createLocalKeys=True, changeAuthMethod=True)
+                self.config.set_key("coinapult_ecc_public", str(self.client.ecc_pub_pem), True)
+                self.ecc_pub_key_edit.setText(self.client.ecc_pub_pem)
+                self.config.set_key("coinapult_ecc_private", str(self.client.ecc['privkey'].to_pem()), True)
+                self.ecc_priv_key_edit.setText(str(self.client.ecc['privkey'].to_pem()))
+                self.config.set_key('coinapult_auth_method', 'ECC', True)
+                self.client.activateAccount(agree=True)
+
+                d.accept()
+            else:
+                self.disable()
+                return False
+
         d = QDialog()
-        d.setWindowTitle("Settings")
+        d.setWindowTitle("Create Coinapult Account")
         layout = QGridLayout(d)
-        layout.addWidget(QLabel(_('Coinapult API key: ')), 0, 0)
-        self.api_key_edit = QLineEdit(self.api_key())
-        self.api_key_edit.textChanged.connect(check_for_api_key)
-        layout.addWidget(self.api_key_edit, 0, 1, 1, 2)
 
-        layout.addWidget(QLabel(_('Coinapult API secret: ')), 1, 0)
-        self.api_secret_edit = QLineEdit()
-        self.api_key_edit.textChanged.connect(check_for_api_secret)
-        layout.addWidget(self.api_secret_edit, 1, 1, 1, 2)
+        # lable = None
 
-        layout.addWidget(QLabel(_("Do you agree to Coinapult's Terms of Service (https://coinapult.com/terms)?: ")), 2, 0)
+        text_edit = QPlainTextEdit()
+        text = open(os.path.dirname(__file__) + '/lib/TERMS.txt').read()
+        text_edit.setPlainText(text)
+        layout.addWidget(text_edit, 1, 0)
+        layout.setRowStretch(1, 4)
+
+        layout.addWidget(QLabel(_("Do you agree to Coinapult's Terms of Service (https://coinapult.com/terms)?: ")), 3, 0)
         tos_checkbox = QCheckBox()
         tos_checkbox.setEnabled(True)
         tos_checkbox.setChecked(self.config.get('plugin_coinapult_locks_tos', 'unchecked') != 'unchecked')
         tos_checkbox.stateChanged.connect(on_change_tos)
-        layout.addWidget(tos_checkbox, 2, 1)
+        layout.addWidget(tos_checkbox, 3, 1)
 
         ok_button = QPushButton(_("OK"))
         ok_button.clicked.connect(lambda: ok_clicked())
-        layout.addWidget(ok_button, 3, 1)
+        layout.addWidget(ok_button, 4, 1)
 
         if d.exec_():
-          return True
+            return True
         else:
-          return False
+            return False
 
     def get_quote(self):
         if self.locks_action() == 'Lock':
@@ -291,10 +404,9 @@ class Plugin(BasePlugin):
             address = None
             for addr in self.wallet.addresses():
                 u, used = self.wallet.is_used(addr)
-                if not used:
+                if not used and u == 0:
                     address = addr
                     break
-            print address
             try:
                 unlock = self.client.unlock(amount=0, outAmount=self.locks_amount(), currency=self.locks_currency(), address=address)
                 print unlock
@@ -342,7 +454,7 @@ class Plugin(BasePlugin):
     def unlock_confirm_dialog(self, unlock, address):
         def unlock_clicked():
             try:
-                self.client.unlockConfirm(transaction_id=unlock['transaction_id'])
+                print self.client.unlockConfirm(transaction_id=unlock['transaction_id'])
                 self.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
                 d.accept()
             except CoinapultError as ce:

@@ -780,7 +780,7 @@ class ElectrumWindow(QMainWindow):
         if not message and not amount:
             QMessageBox.warning(self, _('Error'), _('No message or amount'), _('OK'))
             return
-        self.receive_requests = self.wallet.storage.get('receive_requests',{}) 
+        self.receive_requests = self.wallet.storage.get('receive_requests',{})
         self.receive_requests[addr] = (amount, message)
         self.wallet.storage.put('receive_requests', self.receive_requests)
         self.update_receive_tab()
@@ -802,7 +802,7 @@ class ElectrumWindow(QMainWindow):
         self.receive_amount_e.setAmount(None)
 
     def clear_receive_tab(self):
-        self.receive_requests = self.wallet.storage.get('receive_requests',{}) 
+        self.receive_requests = self.wallet.storage.get('receive_requests',{})
         domain = self.wallet.get_account_addresses(self.current_account, include_change=False)
         for addr in domain:
             if not self.wallet.history.get(addr) and addr not in self.receive_requests.keys():
@@ -836,7 +836,7 @@ class ElectrumWindow(QMainWindow):
         self.receive_address_e.setText(addr)
 
     def update_receive_tab(self):
-        self.receive_requests = self.wallet.storage.get('receive_requests',{}) 
+        self.receive_requests = self.wallet.storage.get('receive_requests',{})
         b = len(self.receive_requests) > 0
         self.receive_list.setVisible(b)
         self.receive_requests_label.setVisible(b)
@@ -1584,7 +1584,7 @@ class ElectrumWindow(QMainWindow):
             self.payment_request_ok()
         else:
             self.payment_request_error()
-            
+
 
     def create_invoice_menu(self, position):
         item = self.invoices_list.itemAt(position)
@@ -1634,11 +1634,11 @@ class ElectrumWindow(QMainWindow):
                     name = _("Receiving") if not is_change else _("Change")
                     seq_item = QTreeWidgetItem( [ name, '', '', '', ''] )
                     account_item.addChild(seq_item)
-                    if not is_change: 
+                    if not is_change:
                         seq_item.setExpanded(True)
                 else:
                     seq_item = account_item
-                    
+
                 used_item = QTreeWidgetItem( [ _("Used"), '', '', '', ''] )
                 used_flag = False
 
@@ -1892,7 +1892,7 @@ class ElectrumWindow(QMainWindow):
 
 
     def show_qrcode(self, data, title = _("QR code")):
-        if not data: 
+        if not data:
             return
         d = QRDialog(data, self, title)
         d.exec_()
@@ -2280,8 +2280,8 @@ class ElectrumWindow(QMainWindow):
         d.setMinimumSize(850, 300)
         vbox = QVBoxLayout(d)
 
-        msg = "%s\n%s\n%s" % (_("WARNING: ALL your private keys are secret."), 
-                              _("Exposing a single private key can compromise your entire wallet!"), 
+        msg = "%s\n%s\n%s" % (_("WARNING: ALL your private keys are secret."),
+                              _("Exposing a single private key can compromise your entire wallet!"),
                               _("In particular, DO NOT use 'redeem private key' services proposed by third parties."))
         vbox.addWidget(QLabel(msg))
 
@@ -2304,7 +2304,7 @@ class ElectrumWindow(QMainWindow):
         def privkeys_thread():
             for addr in addresses:
                 time.sleep(0.1)
-                if done: 
+                if done:
                     break
                 private_keys[addr] = "\n".join(self.wallet.get_private_key(addr, password))
                 d.emit(SIGNAL('computing_privkeys'))
@@ -2654,7 +2654,7 @@ class ElectrumWindow(QMainWindow):
         on_video_device = lambda x: self.config.set_key("video_device", str(qr_combo.itemData(x).toString()), True)
         qr_combo.currentIndexChanged.connect(on_video_device)
         widgets.append((qr_label, qr_combo, qr_help))
-                                   
+
         usechange_cb = QCheckBox(_('Use change addresses'))
         usechange_cb.setChecked(self.wallet.use_change)
         usechange_help = HelpButton(_('Using change addresses makes it more difficult for other people to track your transactions.'))
@@ -2684,7 +2684,7 @@ class ElectrumWindow(QMainWindow):
 
         for a,b,c in widgets:
             i = grid.rowCount()
-            if b: 
+            if b:
                 grid.addWidget(a, i, 0)
                 grid.addWidget(b, i, 1)
             else:
