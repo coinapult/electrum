@@ -5,20 +5,16 @@ import decimal
 import httplib
 
 import os
-import json
 import threading
-from urllib import urlencode
 from PyQt4.QtCore import SIGNAL
-from gui.qt import MyTreeWidget
-from gui.qt.qrcodewidget import QRCodeWidget
 
-from electrum_gui.qt import HelpButton, EnterButton
+from electrum_gui.qt import EnterButton, WaitingDialog
 from electrum.i18n import _
-from electrum.plugins import BasePlugin, hook, run_hook
+from electrum.plugins import BasePlugin, hook
 from PyQt4.QtGui import QMessageBox, QApplication, QPushButton, QComboBox, QDialog, QGridLayout, QLabel, QLineEdit, \
     QCheckBox, QWidget, QHeaderView, QSizePolicy, QTextEdit, QPlainTextEdit
 from electrum.bitcoin import is_valid
-from lib.coinapult import CoinapultClient, CoinapultError
+from lib.coinapult import CoinapultClient, CoinapultError, CoinapultErrorECC
 
 LOCK_ACTIONS = ['Lock', 'Unlock']
 LOCKS_CURRENCIES = ['USD', 'EUR', 'GBP', 'XAU', 'XAG']
@@ -84,9 +80,6 @@ class Plugin(BasePlugin):
             ecc_priv = self.config.get('coinapult_ecc_private', '')
             try:
                 self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
-
-                self.client.activateAccount(agree=True)  # TODO move to manual agreement query
-
             except:
                 self.client = None
                 #TODO disable plugin??
@@ -169,10 +162,8 @@ class Plugin(BasePlugin):
                 disp_cur = cur
             widg = self.tabLayout.itemAtPosition(row, 1)
             widg.setText('%s %s' % (lock_bals[cur], disp_cur))
-            # self.tabLayout.addWidget(QLabel(_('%s %s' % (lock_bals[cur], disp_cur))), row, 1)
             row += 1
         widg = self.tabLayout.itemAtPosition(row, 1)
-        # self.tabLayout.addWidget(QLabel(_('Estimated Total BTC Value')), row, 0)
         widg.setText('%s BTC' % self.locks_BTC_balance())
 
     def on_change_action(self, act):
@@ -288,10 +279,6 @@ class Plugin(BasePlugin):
             else:
                 self.config.set_key('coinapult_auth_method', 'ECC', True)
 
-        def on_click_create_account():
-            #TODO are there keys already? Warn before overwriting!
-            pass
-
         d = QDialog()
         d.setWindowTitle("Settings")
         layout = QGridLayout(d)
@@ -342,6 +329,22 @@ class Plugin(BasePlugin):
             return False
 
     def create_account_dialog(self):
+        def coinapult_signup():
+            try:
+                self.client.createAccount(createLocalKeys=True, changeAuthMethod=True)
+                self.client.activateAccount(agree=True)
+            except (CoinapultError, CoinapultErrorECC) as ce:
+                QMessageBox.warning(None, _("Unable to create Coinapult account because %s" % str(ce), _("OK")))
+
+        def signup_done(result):
+            self.ca_ok_button.setDisabled(False)
+            self.config.set_key("coinapult_ecc_public", str(self.client.ecc_pub_pem), True)
+            self.ecc_pub_key_edit.setText(self.client.ecc_pub_pem)
+            self.config.set_key("coinapult_ecc_private", str(self.client.ecc['privkey'].to_pem()), True)
+            self.ecc_priv_key_edit.setText(str(self.client.ecc['privkey'].to_pem()))
+            self.config.set_key('coinapult_auth_method', 'ECC', True)
+            d.accept()
+
         def on_change_tos(checked):
             if checked:
                 self.config.set_key('plugin_coinapult_locks_tos', 'checked')
@@ -350,24 +353,20 @@ class Plugin(BasePlugin):
 
         def ok_clicked():
             if self.agreed_tos():
-                self.client.createAccount(createLocalKeys=True, changeAuthMethod=True)
-                self.config.set_key("coinapult_ecc_public", str(self.client.ecc_pub_pem), True)
-                self.ecc_pub_key_edit.setText(self.client.ecc_pub_pem)
-                self.config.set_key("coinapult_ecc_private", str(self.client.ecc['privkey'].to_pem()), True)
-                self.ecc_priv_key_edit.setText(str(self.client.ecc['privkey'].to_pem()))
-                self.config.set_key('coinapult_auth_method', 'ECC', True)
-                self.client.activateAccount(agree=True)
-
-                d.accept()
-            else:
-                self.disable()
-                return False
+                self.ca_ok_button.setDisabled(True)
+                self.waiting_dialog = WaitingDialog(d, 'Creating your Coinapult account. One moment please...',
+                                                    coinapult_signup, signup_done)
+                self.waiting_dialog.start()
 
         d = QDialog()
         d.setWindowTitle("Create Coinapult Account")
         layout = QGridLayout(d)
 
         # lable = None
+        layout.addWidget(
+            QLabel(_('Creating your Coinapult account. This will overwrite any Coinapult API keys '
+                    'in your wallet.\n\nIf you do not have backups, this will lock you out of your ' # TODO This isn't actually stored in the wallet yet...
+                    'account!')), 0, 0)
 
         text_edit = QPlainTextEdit()
         text = open(os.path.dirname(__file__) + '/lib/TERMS.txt').read()
@@ -382,9 +381,9 @@ class Plugin(BasePlugin):
         tos_checkbox.stateChanged.connect(on_change_tos)
         layout.addWidget(tos_checkbox, 3, 1)
 
-        ok_button = QPushButton(_("OK"))
-        ok_button.clicked.connect(lambda: ok_clicked())
-        layout.addWidget(ok_button, 4, 1)
+        self.ca_ok_button = QPushButton(_("OK"))
+        self.ca_ok_button.clicked.connect(ok_clicked)
+        layout.addWidget(self.ca_ok_button, 4, 1)
 
         if d.exec_():
             return True
@@ -394,11 +393,14 @@ class Plugin(BasePlugin):
     def get_quote(self):
         if self.locks_action() == 'Lock':
             try:
+                # QMessageBox.information(None, _('Lock Quote'),
+                #                         _('Getting Lock quote from Coinapult. Please wait one moment.'), _('OK'))
                 lock = self.client.lock(amount=float(self.locks_amount()), currency=self.locks_currency())
                 print lock
                 return self.lock_confirm_dialog(lock)
             except CoinapultError as ce:
-                # TODO: raise warning message
+                QMessageBox.warning(None, _('Lock Failed'),
+                                        _('Lock action failed due to reason: %s') % (ce), _('OK'))
                 print ce
         else:
             address = None
@@ -412,9 +414,9 @@ class Plugin(BasePlugin):
                 print unlock
                 return self.unlock_confirm_dialog(unlock, address=address)
             except CoinapultError as ce:
-                # TODO: raise warning message
+                QMessageBox.warning(None, _('Unlock Failed'),
+                                        _('Unlock action failed due to reason: %s') % (ce), _('OK'))
                 print ce
-        #TODO: raise warning message
 
     def lock_confirm_dialog(self, lock):
         def lock_clicked():
