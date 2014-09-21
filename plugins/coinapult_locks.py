@@ -108,7 +108,7 @@ class Plugin(BasePlugin):
 
     @hook
     def init_qt(self, gui):
-        self.gui = gui
+        self.init_balances(gui)
         if not self.agreed_tos() or not self.api_key() or not self.api_secret():
             if self.settings_dialog():
                 self.enable()
@@ -118,16 +118,8 @@ class Plugin(BasePlugin):
                 return False
         else:
             self.gui.main_window.tabs.addTab(self.create_locks_tab(), "Locks")
-
         self.btc_rate = decimal.Decimal("0.0")
-        if self.balance_updater is None:
-            self.balance_updater = Balance_updater(self)
-            self.balance_updater.start()
-            self.gui.balance_updater = self.balance_updater
-        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
-                                     self.gui.main_window.update_status)
-        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
-                                     self.update_locks_bal_display)
+
 
     @hook
     def get_locks_BTC_balance(self, r):
@@ -137,6 +129,19 @@ class Plugin(BasePlugin):
     @hook
     def load_wallet(self, wallet):
         self.wallet = wallet
+
+    def init_balances(self, gui):
+        self.gui = gui
+        if self.balance_updater is None:
+            self.balance_updater = Balance_updater(self)
+            self.balance_updater.start()
+            self.gui.balance_updater = self.balance_updater
+        elif not self.balance_updater.is_running:
+            self.balance_updater.is_running = True
+        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
+                                     self.gui.main_window.update_status)
+        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
+                                     self.update_locks_bal_display)
 
     def api_key(self):
         return self.config.get("plugin_coinapult_locks_api_key")
@@ -174,7 +179,6 @@ class Plugin(BasePlugin):
 
     def update_locks_bal_display(self):
         lock_bals = self.locks_balances()
-        print lock_bals
         row = 1
         for cur in LOCKS_CURRENCIES:
             if cur == 'XAU':
@@ -286,6 +290,7 @@ class Plugin(BasePlugin):
 
     def enable(self):
         self.set_enabled(True)
+        self.init_balances(self.gui)
         return True
 
     def disable(self):
@@ -294,6 +299,7 @@ class Plugin(BasePlugin):
             if self.gui.main_window.tabs.tabText(i) == "Locks":
                 self.gui.main_window.tabs.removeTab(i)
         self.set_enabled(False)
+        self.balance_updater.stop()
         return True
 
     def is_available(self):

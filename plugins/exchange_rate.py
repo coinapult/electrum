@@ -372,10 +372,8 @@ class Plugin(BasePlugin):
             self.win.update_status()
 
     def close(self):
-        self.exchanger.stop()
-        self.exchanger = None
-        self.win.tabs.removeTab(1)
-        self.win.tabs.insertTab(1, self.win.create_send_tab(), _('Send'))
+        self.balance_updater.stop()
+        self.balance_updater = None
         self.win.update_status()
 
     def set_currencies(self, currency_options):
