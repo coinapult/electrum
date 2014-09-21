@@ -52,7 +52,7 @@ class Balance_updater(threading.Thread):
                 for bal in bals['balances']:
                     if bal['currency'] != 'BTC':
                         self.parent.config.set_key('Locks_%s_balance' % bal['currency'], bal['amount'], True)
-        except CoinapultError as ce:
+        except (CoinapultError, CoinapultErrorECC) as ce:
             # TODO: this isn't really something to bother the user about, it is probably just a bad internet connection
             print ce
             return
@@ -180,6 +180,43 @@ class Plugin(BasePlugin):
             if amount != self.config.get('Locks_amount', 0):
                 self.config.set_key('Locks_amount', str(amount), True)
 
+        def get_quote():
+            def get_lock():
+                try:
+                    lock = self.client.lock(amount=float(self.locks_amount()), currency=self.locks_currency())
+                    print lock
+                    return lock
+                except (CoinapultError, CoinapultErrorECC) as ce:
+                    QMessageBox.warning(None, _('Lock Failed'),
+                                        _('Lock action failed due to reason: %s') % (ce), _('OK'))
+                    print ce
+
+            def get_unlock():
+                self.unlock_address = None
+                for addr in self.wallet.addresses():
+                    u, used = self.wallet.is_used(addr)
+                    if not used and u == 0:
+                        self.unlock_address = addr
+                        break
+                try:
+                    unlock = self.client.unlock(amount=0, outAmount=self.locks_amount(), currency=self.locks_currency(),
+                                                address=self.unlock_address)
+                    return unlock
+                except (CoinapultError, CoinapultErrorECC) as ce:
+                    QMessageBox.warning(None, _('Unlock Failed'),
+                                        _('Unlock action failed due to reason: %s') % (ce), _('OK'))
+                    print ce
+
+            self.quote_button.setDisabled(True)
+            if self.locks_action() == 'Lock':
+                self.waiting_dialog = WaitingDialog(w, 'Requesting Lock Quote',
+                                                    get_lock, self.lock_confirm_dialog)
+                self.waiting_dialog.start()
+            else:
+                self.waiting_dialog = WaitingDialog(w, 'Requesting Unlock Quote',
+                                                    get_unlock, self.unlock_confirm_dialog)
+                self.waiting_dialog.start()
+
         w = QWidget()
         self.tabLayout = QGridLayout(w)
 
@@ -218,9 +255,9 @@ class Plugin(BasePlugin):
         btc_amount_edit.textChanged.connect(on_btc_amount_change)
         self.tabLayout.addWidget(btc_amount_edit, 9, 1)
 
-        quote_button = QPushButton(_('Get Quote'))
-        quote_button.clicked.connect(self.get_quote)
-        self.tabLayout.addWidget(quote_button, 10, 1)
+        self.quote_button = QPushButton(_('Get Quote'))
+        self.quote_button.clicked.connect(get_quote)
+        self.tabLayout.addWidget(self.quote_button, 10, 1)
 
         return w
 
@@ -390,37 +427,9 @@ class Plugin(BasePlugin):
         else:
             return False
 
-    def get_quote(self):
-        if self.locks_action() == 'Lock':
-            try:
-                # QMessageBox.information(None, _('Lock Quote'),
-                #                         _('Getting Lock quote from Coinapult. Please wait one moment.'), _('OK'))
-                lock = self.client.lock(amount=float(self.locks_amount()), currency=self.locks_currency())
-                print lock
-                return self.lock_confirm_dialog(lock)
-            except CoinapultError as ce:
-                QMessageBox.warning(None, _('Lock Failed'),
-                                        _('Lock action failed due to reason: %s') % (ce), _('OK'))
-                print ce
-        else:
-            address = None
-            for addr in self.wallet.addresses():
-                u, used = self.wallet.is_used(addr)
-                if not used and u == 0:
-                    address = addr
-                    break
-            try:
-                unlock = self.client.unlock(amount=0, outAmount=self.locks_amount(), currency=self.locks_currency(), address=address)
-                print unlock
-                return self.unlock_confirm_dialog(unlock, address=address)
-            except CoinapultError as ce:
-                QMessageBox.warning(None, _('Unlock Failed'),
-                                        _('Unlock action failed due to reason: %s') % (ce), _('OK'))
-                print ce
-
     def lock_confirm_dialog(self, lock):
         def lock_clicked():
-            message = "Lock %s %s for cost of %s_BTC" % (
+            message = "Lock %s %s for cost of %s BTC" % (
                 lock['out']['expected'], lock['out']['currency'],
                 lock['in']['expected'])
             self.gui.main_window.pay_from_URI("bitcoin:%s?amount=%s&message=%s" % (lock['address'],
@@ -429,6 +438,8 @@ class Plugin(BasePlugin):
             self.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
             d.accept()
             pass
+
+        self.quote_button.setDisabled(False)
 
         d = QDialog()
         d.setWindowTitle("Confirm Lock")
@@ -441,7 +452,8 @@ class Plugin(BasePlugin):
         row += 1
 
         layout.addWidget(QLabel(_("If you wish to complete this Lock, please click 'Lock', then send %s BTC to "
-                                  "%s" % (lock['in']['expected'], lock['address']))), row, 0)
+                                  "%s\n\nPlease note that this transaction will take 2 confirmations to complete." %
+                                  (lock['in']['expected'], lock['address']))), row, 0)
         row += 1
 
         lock_button = QPushButton(_("Lock"))
@@ -453,15 +465,18 @@ class Plugin(BasePlugin):
         else:
             return False
 
-    def unlock_confirm_dialog(self, unlock, address):
+    def unlock_confirm_dialog(self, unlock):
         def unlock_clicked():
             try:
                 print self.client.unlockConfirm(transaction_id=unlock['transaction_id'])
                 self.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
                 d.accept()
-            except CoinapultError as ce:
-                # TODO: raise alert
+            except (CoinapultError, CoinapultErrorECC) as ce:
+                QMessageBox.warning(None, _('Unlock Failed'),
+                                    _('Unlock action failed due to reason: %s') % (ce), _('OK'))
                 print ce
+
+        self.quote_button.setDisabled(False)
 
         d = QDialog()
         d.setWindowTitle("Confirm Unlock")
@@ -474,7 +489,7 @@ class Plugin(BasePlugin):
         row += 1
 
         layout.addWidget(QLabel(_("If you wish to complete this Unlock, please click 'Unlock' below, then we will send %s BTC to "
-                                  "%s" % (unlock['out']['expected'], address))), row, 0)
+                                  "%s" % (unlock['out']['expected'], self.unlock_address))), row, 0)
         row += 1
 
         unlock_button = QPushButton(_("Unlock"))
