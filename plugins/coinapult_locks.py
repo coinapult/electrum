@@ -29,10 +29,21 @@ class Balance_updater(threading.Thread):
         if hasattr(self.parent, 'client'):
             self.client = self.parent.client
         else:
-            self.client = CoinapultClient({'key': self.parent.api_key(), 'secret': self.parent.api_secret()})
+            authMethod = self.config.get('coinapult_auth_method', 'ECC')
+            if authMethod == 'REST':
+                self.client = CoinapultClient(credentials={'key': self.parent.api_key(),
+                                                           'secret': self.parent.api_secret()})
+            else:
+                # TODO should this be moved to the wallet?
+                ecc_pub = self.config.get('coinapult_ecc_public', '')
+                ecc_priv = self.config.get('coinapult_ecc_private', '')
+                try:
+                    self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
+                except (CoinapultError, CoinapultErrorECC):
+                    self.client = None
         self.lock = threading.Lock()
         self.query_balances = threading.Event()
-        self.parent.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
+        # self.parent.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
         self.is_running = False
 
     def stop(self):
@@ -49,9 +60,16 @@ class Balance_updater(threading.Thread):
 
             bals = self.client.accountInfo(balanceType='locks')
             if bals and 'balances' in bals:
-                for bal in bals['balances']:
-                    if bal['currency'] != 'BTC':
-                        self.parent.config.set_key('Locks_%s_balance' % bal['currency'], bal['amount'], True)
+                for cur in LOCKS_CURRENCIES:
+                    found = False
+                    for bal in bals['balances']:
+                        if bal['currency'] == cur:
+                            found = True
+                            self.parent.config.set_key('Locks_%s_balance' % bal['currency'], bal['amount'], True)
+                    if not found:
+                        self.parent.config.set_key('Locks_%s_balance' % cur, 0, True)
+
+            self.parent.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
         except (CoinapultError, CoinapultErrorECC) as ce:
             # TODO: this isn't really something to bother the user about, it is probably just a bad internet connection
             print ce
@@ -71,7 +89,7 @@ class Plugin(BasePlugin):
 
     def __init__(self, config, name):
         BasePlugin.__init__(self, config, name)
-        authMethod = self.config.get('coinapult_auth_method', 'REST')
+        authMethod = self.config.get('coinapult_auth_method', 'ECC')
         if authMethod == 'REST':
             self.client = CoinapultClient(credentials={'key': self.api_key(), 'secret': self.api_secret()})
         else:
@@ -82,7 +100,9 @@ class Plugin(BasePlugin):
                 self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
             except:
                 self.client = None
-                #TODO disable plugin??
+                QMessageBox.warning(None, _('Coinapult Connection failed'),
+                                    _('Failed to connect to Coinapult. Locks disabled for this session.'), _('OK'))
+                self.disable()
         self.balance_updater = None
         self.gui = None
 
@@ -106,6 +126,8 @@ class Plugin(BasePlugin):
             self.gui.balance_updater = self.balance_updater
         self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
                                      self.gui.main_window.update_status)
+        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
+                                     self.update_locks_bal_display)
 
     @hook
     def get_locks_BTC_balance(self, r):
@@ -152,7 +174,8 @@ class Plugin(BasePlugin):
 
     def update_locks_bal_display(self):
         lock_bals = self.locks_balances()
-        row = 2
+        print lock_bals
+        row = 1
         for cur in LOCKS_CURRENCIES:
             if cur == 'XAU':
                 disp_cur = 'oz of Gold'
@@ -161,10 +184,10 @@ class Plugin(BasePlugin):
             else:
                 disp_cur = cur
             widg = self.tabLayout.itemAtPosition(row, 1)
-            widg.setText('%s %s' % (lock_bals[cur], disp_cur))
+            widg.widget().setText('%s %s' % (lock_bals[cur], disp_cur))
             row += 1
         widg = self.tabLayout.itemAtPosition(row, 1)
-        widg.setText('%s BTC' % self.locks_BTC_balance())
+        widg.widget().setText('%s BTC' % self.locks_BTC_balance())
 
     def on_change_action(self, act):
         action = LOCK_ACTIONS[act]

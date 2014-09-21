@@ -490,14 +490,14 @@ class ElectrumWindow(QMainWindow):
                 # include Locks balance?
                 r = {}
                 run_hook('get_locks_BTC_balance', r)
-                lock_bals = r.get(0)
-                if lock_bals:
+                lock_bals = r.get(0, None)
+                if lock_bals is not None:
                     c += int(lock_bals * 1e8)
 
                 text =  _( "Balance" ) + ": %s "%( self.format_amount(c) ) + self.base_unit()
                 if u: text +=  " [%s unconfirmed]"%( self.format_amount(u,True).strip() )
 
-                if lock_bals:
+                if lock_bals is not None:
                     text += " [~%s BTC Locked]" % lock_bals
 
                 # append fiat balance and price from exchange rate plugin
