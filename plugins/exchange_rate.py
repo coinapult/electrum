@@ -372,8 +372,8 @@ class Plugin(BasePlugin):
             self.win.update_status()
 
     def close(self):
-        self.balance_updater.stop()
-        self.balance_updater = None
+        self.exchanger.stop()
+        self.exchanger = None
         self.win.update_status()
 
     def set_currencies(self, currency_options):

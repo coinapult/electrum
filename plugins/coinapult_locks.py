@@ -1,10 +1,12 @@
 """
 Author: Coinapult - support@coinapult.com
 """
+from copy import copy
 import decimal
 import httplib
 
 import os
+import json
 import threading
 from PyQt4.QtCore import SIGNAL
 
@@ -18,6 +20,7 @@ from lib.coinapult import CoinapultClient, CoinapultError, CoinapultErrorECC
 
 LOCK_ACTIONS = ['Lock', 'Unlock']
 LOCKS_CURRENCIES = ['USD', 'EUR', 'GBP', 'XAU', 'XAG']
+LOCKS_BALS = {'USD': 0, 'EUR': 0, 'GBP': 0, 'XAU': 0, 'XAG': 0, 'BTC': 0}
 
 
 class Balance_updater(threading.Thread):
@@ -29,34 +32,35 @@ class Balance_updater(threading.Thread):
         if hasattr(self.parent, 'client'):
             self.client = self.parent.client
         else:
-            authMethod = self.config.get('coinapult_auth_method', 'ECC')
+            authMethod = self.parent.config.get('coinapult_auth_method', 'ECC')
             if authMethod == 'REST':
                 self.client = CoinapultClient(credentials={'key': self.parent.api_key(),
                                                            'secret': self.parent.api_secret()})
             else:
                 # TODO should this be moved to the wallet?
-                ecc_pub = self.config.get('coinapult_ecc_public', '')
-                ecc_priv = self.config.get('coinapult_ecc_private', '')
+                ecc_pub = self.parent.config.get('coinapult_ecc_public', '')
+                ecc_priv = self.parent.config.get('coinapult_ecc_private', '')
                 try:
                     self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
                 except (CoinapultError, CoinapultErrorECC):
                     self.client = None
         self.lock = threading.Lock()
         self.query_balances = threading.Event()
-        # self.parent.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
+        # self.parent.gui.main_window.emit(SIGNAL("refresh_locks_account()"))
         self.is_running = False
 
     def stop(self):
         self.is_running = False
 
-    def refresh_locks_balances(self):
+    def refresh_locks_account(self):
         try:
+            locks_bals = copy(LOCKS_BALS)
             bals = self.client.accountInfo(balanceType='locks', locksAsBTC=True)
             if bals and 'balances' in bals:
                 if len(bals['balances']) > 0:
-                    self.parent.config.set_key('Locks_BTC_balance', bals['balances'][0]['amount'], True)
+                    locks_bals['BTC'] = bals['balances'][0]['amount']
                 else:
-                    self.parent.config.set_key('Locks_BTC_balance', 0, True)
+                    locks_bals['BTC'] = 0
 
             bals = self.client.accountInfo(balanceType='locks')
             if bals and 'balances' in bals:
@@ -65,11 +69,46 @@ class Balance_updater(threading.Thread):
                     for bal in bals['balances']:
                         if bal['currency'] == cur:
                             found = True
-                            self.parent.config.set_key('Locks_%s_balance' % bal['currency'], bal['amount'], True)
+                            locks_bals[bal['currency']] = bal['amount']
                     if not found:
-                        self.parent.config.set_key('Locks_%s_balance' % cur, 0, True)
+                        locks_bals[bal['currency']] = 0
+            self.parent.config.set_key('Locks_balances', locks_bals, True)
 
-            self.parent.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
+            #calculate processing balances
+            unbals = copy(LOCKS_BALS)
+            pending_locks = self.parent.config.get('pending_locks', [])
+            for l in pending_locks:
+                try:
+                    lock = self.client.search(transaction_id=l['transaction_id'])
+                    print lock
+                    if lock and lock['state'] not in ('pending', 'complete', 'canceled'):
+                        unbals[lock['out']['currency']] += lock['out']['expected']
+                        print unbals[lock['out']['currency']]
+                    elif lock and lock['state'] in ('complete', 'canceled'):
+                        pending_locks.remove(l)
+                except (CoinapultError, CoinapultErrorECC) as ce:
+                    print ce
+            self.parent.config.set_key('Locks_unbalances', unbals, True)
+            self.parent.config.set_key('pending_locks', pending_locks, True)
+
+            #update labels with unlock details
+            pending_unlocks = self.parent.config.get('pending_unlocks', [])
+            for ul in pending_unlocks:
+                try:
+                    unlock = self.client.search(transaction_id=ul['transaction_id'])
+                    print unlock
+                    if unlock and unlock['state'] in ('complete', 'canceled'):
+                        #TODO update labels
+                        pending_unlocks.remove(ul)
+                        #TODO remove pending unlock from list
+                        # pending_unlocks = self.parent.config.set_key('pending_unlocks', pending_unlocks, True)
+                        # self.parent.config.set_key('pending_unlocks', pending_unlocks)
+                        continue
+                except (CoinapultError, CoinapultErrorECC) as ce:
+                    print ce
+            self.parent.config.set_key('pending_unlocks', pending_unlocks, True)
+
+            self.parent.gui.main_window.emit(SIGNAL("refresh_locks_account()"))
         except (CoinapultError, CoinapultErrorECC) as ce:
             # TODO: this isn't really something to bother the user about, it is probably just a bad internet connection
             print ce
@@ -79,8 +118,8 @@ class Balance_updater(threading.Thread):
         self.is_running = True
         while self.is_running:
             self.query_balances.clear()
-            self.refresh_locks_balances()
-            self.query_balances.wait(90)
+            self.refresh_locks_account()
+            self.query_balances.wait(15)
 
 
 class Plugin(BasePlugin):
@@ -105,6 +144,9 @@ class Plugin(BasePlugin):
                 self.disable()
         self.balance_updater = None
         self.gui = None
+        self.Locks_action = None
+        self.Locks_currency = None
+        self.Locks_amount = None
 
     @hook
     def init_qt(self, gui):
@@ -120,10 +162,9 @@ class Plugin(BasePlugin):
             self.gui.main_window.tabs.addTab(self.create_locks_tab(), "Locks")
         self.btc_rate = decimal.Decimal("0.0")
 
-
     @hook
-    def get_locks_BTC_balance(self, r):
-        bals = self.locks_BTC_balance()
+    def get_locks_balances(self, r):
+        bals = self.config.get('Locks_balances', LOCKS_BALS)
         r[0] = bals
 
     @hook
@@ -138,9 +179,9 @@ class Plugin(BasePlugin):
             self.gui.balance_updater = self.balance_updater
         elif not self.balance_updater.is_running:
             self.balance_updater.is_running = True
-        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
+        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_account()"),
                                      self.gui.main_window.update_status)
-        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_balances()"),
+        self.gui.main_window.connect(self.gui.main_window, SIGNAL("refresh_locks_account()"),
                                      self.update_locks_bal_display)
 
     def api_key(self):
@@ -152,24 +193,6 @@ class Plugin(BasePlugin):
     def agreed_tos(self):
         return self.config.get("plugin_coinapult_locks_tos", False)
 
-    def locks_action(self):
-        return self.config.get('Locks_action', "Lock")
-
-    def locks_currency(self):
-        return self.config.get('Locks_currency', "USD")
-
-    def locks_amount(self):
-        return self.config.get('Locks_amount', 0)
-
-    def locks_BTC_balance(self):
-        return self.config.get('Locks_BTC_balance', 0)
-
-    def locks_balances(self):
-        bals = {}
-        for cur in LOCKS_CURRENCIES:
-            bals[cur] = self.config.get('Locks_%s_balance' % cur, 0)
-        return bals
-
     def fullname(self):
         return 'Coinapult Locks'
 
@@ -178,7 +201,8 @@ class Plugin(BasePlugin):
                  "gold or silver.")
 
     def update_locks_bal_display(self):
-        lock_bals = self.locks_balances()
+        lock_bals = self.config.get('Locks_balances', LOCKS_BALS)
+        unlock_bals = self.config.get('Locks_unbalances', LOCKS_BALS)
         row = 1
         for cur in LOCKS_CURRENCIES:
             if cur == 'XAU':
@@ -188,30 +212,36 @@ class Plugin(BasePlugin):
             else:
                 disp_cur = cur
             widg = self.tabLayout.itemAtPosition(row, 1)
-            widg.widget().setText('%s %s' % (lock_bals[cur], disp_cur))
+            if unlock_bals[cur] > 0:
+                widg.widget().setText('%s [%s unconfirmed] %s' % (lock_bals[cur], unlock_bals[cur], disp_cur))
+            else:
+                widg.widget().setText('%s %s' % (lock_bals[cur], disp_cur))
             row += 1
         widg = self.tabLayout.itemAtPosition(row, 1)
-        widg.widget().setText('%s BTC' % self.locks_BTC_balance())
-
-    def on_change_action(self, act):
-        action = LOCK_ACTIONS[act]
-        if action != self.config.get('Locks_action', "Lock"):
-            self.config.set_key('Locks_action', action, True)
+        widg.widget().setText('%s BTC' % lock_bals['BTC'])
 
     def create_locks_tab(self):
         def on_change_currency(cur):
-            if cur != self.config.get('Locks_currency', "USD"):
-                self.config.set_key('Locks_currency', LOCKS_CURRENCIES[cur], True)
+            if cur != self.Locks_currency:
+                self.Locks_currency = LOCKS_CURRENCIES[cur]
 
         def on_btc_amount_change(amount):
-            if amount != self.config.get('Locks_amount', 0):
-                self.config.set_key('Locks_amount', str(amount), True)
+            if amount != self.Locks_amount:
+                self.Locks_amount = amount
+
+        def on_change_action(act):
+            action = LOCK_ACTIONS[act]
+            if action != self.Locks_action:
+                self.Locks_action = action
 
         def get_quote():
             def get_lock():
                 try:
-                    lock = self.client.lock(amount=float(self.locks_amount()), currency=self.locks_currency())
-                    print lock
+                    lock = self.client.lock(amount=float(self.Locks_amount), currency=self.Locks_currency)
+                    print json.dumps(lock, indent=4)
+                    pending_locks = self.config.get('pending_locks', [])
+                    pending_locks.append(lock)
+                    self.config.set_key('pending_locks', pending_locks, True)
                     return lock
                 except (CoinapultError, CoinapultErrorECC) as ce:
                     QMessageBox.warning(None, _('Lock Failed'),
@@ -226,8 +256,12 @@ class Plugin(BasePlugin):
                         self.unlock_address = addr
                         break
                 try:
-                    unlock = self.client.unlock(amount=0, outAmount=self.locks_amount(), currency=self.locks_currency(),
-                                                address=self.unlock_address)
+                    unlock = self.client.unlock(amount=0, outAmount=float(self.Locks_amount), currency=str(self.Locks_currency),
+                                                address=str(self.unlock_address))
+                    print json.dumps(unlock, indent=4)
+                    pending_unlocks = self.config.get('pending_unlocks', [])
+                    pending_unlocks.append(unlock)
+                    self.config.set_key('pending_unlocks', pending_unlocks, True)
                     return unlock
                 except (CoinapultError, CoinapultErrorECC) as ce:
                     QMessageBox.warning(None, _('Unlock Failed'),
@@ -235,7 +269,7 @@ class Plugin(BasePlugin):
                     print ce
 
             self.quote_button.setDisabled(True)
-            if self.locks_action() == 'Lock':
+            if self.Locks_action == 'Lock':
                 self.waiting_dialog = WaitingDialog(w, 'Requesting Lock Quote',
                                                     get_lock, self.lock_confirm_dialog)
                 self.waiting_dialog.start()
@@ -263,11 +297,11 @@ class Plugin(BasePlugin):
             row += 1
 
         self.tabLayout.addWidget(QLabel(_('Estimated Total BTC Value')), row, 0)
-        self.tabLayout.addWidget(QLabel(_('%s BTC' % self.locks_BTC_balance())), row, 1)
+        self.tabLayout.addWidget(QLabel(_('- BTC')), row, 1)
 
         self.tabLayout.addWidget(QLabel(_('What would you like to do?')), 7, 0)
         combo_action = QComboBox()
-        combo_action.currentIndexChanged.connect(self.on_change_action)
+        combo_action.currentIndexChanged.connect(on_change_action)
         combo_action.addItems(LOCK_ACTIONS)
         self.tabLayout.addWidget(combo_action, 7, 1)
 
@@ -285,12 +319,12 @@ class Plugin(BasePlugin):
         self.quote_button = QPushButton(_('Get Quote'))
         self.quote_button.clicked.connect(get_quote)
         self.tabLayout.addWidget(self.quote_button, 10, 1)
-
         return w
 
     def enable(self):
         self.set_enabled(True)
-        self.init_balances(self.gui)
+        if self.gui:
+            self.init_balances(self.gui)
         return True
 
     def disable(self):
@@ -464,7 +498,7 @@ class Plugin(BasePlugin):
             self.gui.main_window.pay_from_URI("bitcoin:%s?amount=%s&message=%s" % (lock['address'],
                                                                                    lock['in']['expected'],
                                                                                    message))
-            self.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
+            self.gui.main_window.emit(SIGNAL("refresh_locks_account()"))
             d.accept()
             pass
 
@@ -498,7 +532,7 @@ class Plugin(BasePlugin):
         def unlock_clicked():
             try:
                 print self.client.unlockConfirm(transaction_id=unlock['transaction_id'])
-                self.gui.main_window.emit(SIGNAL("refresh_locks_balances()"))
+                self.gui.main_window.emit(SIGNAL("refresh_locks_account()"))
                 d.accept()
             except (CoinapultError, CoinapultErrorECC) as ce:
                 QMessageBox.warning(None, _('Unlock Failed'),

@@ -489,16 +489,16 @@ class ElectrumWindow(QMainWindow):
 
                 # include Locks balance?
                 r = {}
-                run_hook('get_locks_BTC_balance', r)
+                run_hook('get_locks_balances', r)
                 lock_bals = r.get(0, None)
                 if lock_bals is not None:
-                    c += int(lock_bals * 1e8)
+                    c += int(lock_bals['BTC'] * 1e8)
 
                 text =  _( "Balance" ) + ": %s "%( self.format_amount(c) ) + self.base_unit()
                 if u: text +=  " [%s unconfirmed]"%( self.format_amount(u,True).strip() )
 
                 if lock_bals is not None:
-                    text += " [~%s BTC Locked]" % lock_bals
+                    text += " [~%s BTC Locked]" % lock_bals['BTC']
 
                 # append fiat balance and price from exchange rate plugin
                 r = {}
@@ -516,7 +516,6 @@ class ElectrumWindow(QMainWindow):
 
         self.balance_label.setText(text)
         self.status_button.setIcon( icon )
-
 
     def update_wallet(self):
         self.update_status()
