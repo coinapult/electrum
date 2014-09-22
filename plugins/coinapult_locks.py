@@ -150,7 +150,7 @@ class Plugin(BasePlugin):
     @hook
     def init_qt(self, gui):
         self.init_balances(gui)
-        if not self.agreed_tos() or not self.api_key() or not self.api_secret():
+        if not self.agreed_tos():
             if self.settings_dialog():
                 self.enable()
                 return True
@@ -442,6 +442,14 @@ class Plugin(BasePlugin):
             self.config.set_key("coinapult_ecc_private", str(self.client.ecc['privkey'].to_pem()), True)
             self.ecc_priv_key_edit.setText(str(self.client.ecc['privkey'].to_pem()))
             self.config.set_key('coinapult_auth_method', 'ECC', True)
+            ecc_pub = self.config.get('coinapult_ecc_public', '')
+            ecc_priv = self.config.get('coinapult_ecc_private', '')
+            try:
+                self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
+            except:
+                self.client = None
+                QMessageBox.warning(None, _('Coinapult Connection failed'),
+                                    _('Failed to connect to Coinapult. Locks disabled for this session.'), _('OK'))
             d.accept()
 
         def on_change_tos(checked):
