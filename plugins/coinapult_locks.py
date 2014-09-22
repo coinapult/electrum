@@ -32,7 +32,7 @@ class Balance_updater(threading.Thread):
         if hasattr(self.parent, 'client'):
             self.client = self.parent.client
         else:
-            authMethod = self.parent.config.get('coinapult_auth_method', 'ECC')
+            authMethod = self.parent.config.get('coinapult_auth_method', 'REST')
             if authMethod == 'REST':
                 self.client = CoinapultClient(credentials={'key': self.parent.api_key(),
                                                            'secret': self.parent.api_secret()})
@@ -100,7 +100,6 @@ class Balance_updater(threading.Thread):
                     if unlock and unlock['state'] in ('complete', 'canceled'):
                         #TODO update labels
                         pending_unlocks.remove(ul)
-                        #TODO remove pending unlock from list
                         # pending_unlocks = self.parent.config.set_key('pending_unlocks', pending_unlocks, True)
                         # self.parent.config.set_key('pending_unlocks', pending_unlocks)
                         continue
@@ -128,7 +127,7 @@ class Plugin(BasePlugin):
 
     def __init__(self, config, name):
         BasePlugin.__init__(self, config, name)
-        authMethod = self.config.get('coinapult_auth_method', 'ECC')
+        authMethod = self.config.get('coinapult_auth_method', 'REST')
         if authMethod == 'REST':
             self.client = CoinapultClient(credentials={'key': self.api_key(), 'secret': self.api_secret()})
         else:
