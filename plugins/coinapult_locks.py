@@ -45,9 +45,8 @@ class  Balance_updater(threading.Thread):
                 self.client = CoinapultClient(credentials={'key': self.parent.api_key(),
                                                            'secret': self.parent.api_secret()})
             else:
-                # TODO should this be moved to the wallet?
-                ecc_pub = self.parent.config.get('coinapult_ecc_public', '')
-                ecc_priv = self.parent.config.get('coinapult_ecc_private', '')
+                ecc_pub = self.parent.wallet.storage.get("coinapult_ecc_public", '')
+                ecc_priv = self.parent.wallet.storage.get("coinapult_ecc_private", '')
                 try:
                     self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
                 except (CoinapultError, CoinapultErrorECC):
@@ -134,20 +133,6 @@ class Plugin(BasePlugin):
 
     def __init__(self, config, name):
         BasePlugin.__init__(self, config, name)
-        authmethod = self.config.get('coinapult_auth_method', 'REST')
-        if authmethod == 'REST':
-            self.client = CoinapultClient(credentials={'key': self.api_key(), 'secret': self.api_secret()})
-        else:
-            #TODO should this be moved to the wallet?
-            ecc_pub = self.config.get('coinapult_ecc_public', '')
-            ecc_priv = self.config.get('coinapult_ecc_private', '')
-            try:
-                self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
-            except (CoinapultError, CoinapultErrorECC):
-                self.client = None
-                QMessageBox.warning(None, _('Coinapult Connection failed'),
-                                    _('Failed to connect to Coinapult. Locks disabled for this session.'), _('OK'))
-                self.disable()
         self.balance_updater = None
         self.gui = None
         self.Locks_action = None
@@ -165,7 +150,7 @@ class Plugin(BasePlugin):
 
     @hook
     def init_qt(self, gui):
-        self.init_balances(gui)
+        self.gui = gui
         if not self.agreed_tos():
             if self.settings_dialog():
                 self.enable()
@@ -184,9 +169,22 @@ class Plugin(BasePlugin):
     @hook
     def load_wallet(self, wallet):
         self.wallet = wallet
+        authmethod = self.config.get('coinapult_auth_method', 'REST')
+        if authmethod == 'REST':
+            self.client = CoinapultClient(credentials={'key': self.api_key(), 'secret': self.api_secret()})
+        else:
+            ecc_pub = self.wallet.storage.get("coinapult_ecc_public", '')
+            ecc_priv = self.wallet.storage.get("coinapult_ecc_private", '')
+            try:
+                self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
+            except (CoinapultError, CoinapultErrorECC):
+                self.client = None
+                QMessageBox.warning(None, _('Coinapult Connection failed'),
+                                    _('Failed to connect to Coinapult. Locks disabled for this session.'), _('OK'))
+                self.disable()
+        self.init_balances()
 
-    def init_balances(self, gui):
-        self.gui = gui
+    def init_balances(self):
         if self.balance_updater is None:
             self.balance_updater = Balance_updater(self)
             self.balance_updater.start()
@@ -432,11 +430,11 @@ class Plugin(BasePlugin):
 
         def check_for_ecc_pub_key(pub_key):
             if pub_key and len(pub_key) > 12:
-                self.config.set_key("coinapult_ecc_public", str(pub_key))
+                self.wallet.storage.put("coinapult_ecc_public", str(pub_key))
 
         def check_for_ecc_priv_key(priv_key):
             if priv_key and len(priv_key) > 12:
-                self.config.set_key("coinapult_ecc_private", str(priv_key))
+                self.wallet.storage.put("coinapult_ecc_private", str(priv_key))
 
         def ok_clicked():
             # check_for_api_key(self.api_key_edit.text())
@@ -485,7 +483,7 @@ class Plugin(BasePlugin):
                                  "ECC public key"))
         warning_label.setWordWrap(True)
         layout.addWidget(warning_label, 3, 0, Qt.AlignBottom)
-        self.ecc_pub_key_edit = QTextEdit(self.config.get("coinapult_ecc_public", ''))
+        self.ecc_pub_key_edit = QTextEdit(self.wallet.storage.get("coinapult_ecc_public", ''))
         # self.ecc_pub_key_edit.textChanged.connect(check_for_ecc_pub_key)
         layout.addWidget(self.ecc_pub_key_edit, 4, 0, Qt.AlignTop)
         # layout.setRowStretch(2, 3)
@@ -528,13 +526,13 @@ class Plugin(BasePlugin):
 
         def signup_done(result):
             self.ca_ok_button.setDisabled(False)
-            self.config.set_key("coinapult_ecc_public", str(self.client.ecc_pub_pem), True)
+            self.wallet.storage.put("coinapult_ecc_public", str(self.client.ecc_pub_pem))
             self.ecc_pub_key_edit.setText(self.client.ecc_pub_pem)
-            self.config.set_key("coinapult_ecc_private", str(self.client.ecc['privkey'].to_pem()), True)
+            self.wallet.storage.put("coinapult_ecc_private", str(self.client.ecc['privkey'].to_pem()))
             self.ecc_priv_key_edit.setText(str(self.client.ecc['privkey'].to_pem()))
             self.config.set_key('coinapult_auth_method', 'ECC', True)
-            ecc_pub = self.config.get('coinapult_ecc_public', '')
-            ecc_priv = self.config.get('coinapult_ecc_private', '')
+            ecc_pub = self.wallet.storage.get("coinapult_ecc_public", '')
+            ecc_priv = self.wallet.storage.get("coinapult_ecc_private", '')
             try:
                 self.client = CoinapultClient(ecc={'pubkey': ecc_pub, 'privkey': ecc_priv}, authmethod='ecc')
             except (CoinapultError, CoinapultErrorECC):
