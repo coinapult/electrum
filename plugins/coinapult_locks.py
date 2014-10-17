@@ -518,7 +518,7 @@ class Plugin(BasePlugin):
     def create_account_dialog(self):
         def coinapult_signup():
             try:
-                self.client.createAccount(createLocalKeys=True, changeAuthMethod=True)
+                self.client.createAccount(createLocalKeys=True, changeAuthMethod=True, tag="electrum-gfk36")
                 self.client.activateAccount(agree=True)
             except (CoinapultError, CoinapultErrorECC) as ce:
                 QMessageBox.warning(None, _("Unable to create Coinapult account because %s" % str(ce),
